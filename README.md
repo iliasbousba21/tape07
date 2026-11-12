@@ -26,7 +26,7 @@ mp3, wav, m4a/aac, ogg (vorbis), opus, flac en webm — alles wat de browser van
 
 ## Online (Android)
 
-De app staat op https://iliasbousba21.github.io/tape07/
+De app staat op https://iliasbousba21.github.io/tape07/ (gepubliceerd vanaf `main` via GitHub Actions).
 
 Open die link in **Chrome** op je telefoon. Tik op het menu (drie puntjes) en kies **App installeren** of **Toevoegen aan startscherm**. Daarna kun je REEL–7 als gewone app openen en je eigen mp3's laden. De eerste keer is een internetverbinding nodig; daarna werkt de app zelf ook offline. Je muziek blijft in de app staan.
 
