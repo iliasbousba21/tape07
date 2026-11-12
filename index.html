@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
+  <title>REEL–7 field player</title>
+  <meta name="description" content="REEL–7: a tape-style field player for your own music. Works offline." />
+  <meta name="theme-color" content="#e9e5dc" />
+  <meta name="color-scheme" content="light" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+  <link rel="icon" href="./icons/icon-192.png" sizes="192x192" type="image/png" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+  <link rel="preload" href="./fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="./fonts/GeistPixel-Square.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+  <main class="device" id="device" aria-label="REEL–7 field player">
+    <i class="screw s1" aria-hidden="true"></i><i class="screw s2" aria-hidden="true"></i>
+    <i class="screw s3" aria-hidden="true"></i><i class="screw s4" aria-hidden="true"></i>
+
+    <header class="strip">
+      <div class="brand">
+        <span class="mark">reel–7</span>
+        <span class="eng">field player</span>
+      </div>
+      <div class="lamps" aria-hidden="true">
+        <span class="lamp" id="lampPlay"></span><span class="eng">play</span>
+        <span class="lamp rec" id="lampRec"></span><span class="eng">rec</span>
+      </div>
+      <button class="pin" id="btnInfo" aria-label="about and shortcuts"><span>i</span></button>
+    </header>
+
+    <section class="screen-bay">
+      <div class="display" id="display">
+        <div class="d-row d-top">
+          <span id="dMode" class="d-mode">stop</span>
+          <span id="dIdx">--/--</span>
+          <span class="d-gap"></span>
+          <span id="dLoop" class="d-flag">a–b</span>
+          <span id="dFx" class="d-flag">fx</span>
+          <span id="dSpd" class="d-spd">1.00x</span>
+        </div>
+        <div class="d-time" id="dTime" aria-live="off">00:00:00.00</div>
+        <div class="d-title"><span id="dTitle">no tape</span></div>
+        <canvas id="wave" class="d-wave" aria-label="waveform, tap to seek" role="img"></canvas>
+        <canvas id="meters" class="d-meters" aria-hidden="true"></canvas>
+        <div class="d-msg" id="dMsg" role="status" aria-live="polite"></div>
+        <div class="d-glass" aria-hidden="true"></div>
+      </div>
+      <div class="bay-legend eng" aria-hidden="true"><span>tape</span><span>time</span><span>level l/r</span></div>
+    </section>
+
+    <section class="fkeys" aria-label="functions">
+      <button class="key fk" id="kLib" aria-label="library"><b class="glyph g-lib"></b><span class="eng">tape</span></button>
+      <button class="key fk" id="kLoop" aria-label="a–b loop"><b class="txt">a–b</b><span class="eng">loop</span><i class="dot"></i></button>
+      <button class="key fk" id="kCue" aria-label="add cue marker, hold to clear"><b class="glyph g-cue"></b><span class="eng">cue</span></button>
+      <button class="key fk" id="kCuePrev" aria-label="previous cue"><b class="glyph g-cprev"></b><span class="eng">‹ cue</span></button>
+      <button class="key fk" id="kCueNext" aria-label="next cue"><b class="glyph g-cnext"></b><span class="eng">cue ›</span></button>
+      <button class="key fk" id="kFx" aria-label="effects on/off" aria-pressed="true"><b class="txt">fx</b><span class="eng">bypass</span><i class="dot"></i></button>
+    </section>
+
+    <section class="deck">
+      <div class="wheel-wrap">
+        <div class="wheel" id="wheel" role="slider" aria-label="reel: hold to stop the tape, turn to scrub" tabindex="0">
+          <svg class="w-scale" viewBox="0 0 100 100" aria-hidden="true"></svg>
+          <div class="w-well">
+            <div class="w-rot">
+              <div class="w-grooves"></div>
+              <div class="w-dimple"></div>
+              <div class="w-mark"></div>
+              <div class="w-spokes"><i></i><i></i><i></i></div>
+            </div>
+            <div class="w-sheen"></div>
+            <div class="w-hub"><span class="eng">jog</span></div>
+          </div>
+        </div>
+        <span class="eng deck-legend l1">hold = stop</span>
+        <span class="eng deck-legend l2">turn = scrub</span>
+      </div>
+      <div class="speed">
+        <span class="eng">speed</span>
+        <div class="fader" id="fader">
+          <div class="f-scale" aria-hidden="true">
+            <span style="--p:0">2.0</span><span style="--p:.2075">1.5</span><span style="--p:.5" class="c">1.0</span><span style="--p:.7075">.75</span><span style="--p:1">.50</span>
+          </div>
+          <div class="f-track"><i class="f-slot"></i></div>
+          <div class="f-cap"><i></i></div>
+        </div>
+        <button class="key mini" id="kSpeedReset" aria-label="reset speed to 1.00"><b class="txt">=1</b></button>
+      </div>
+    </section>
+
+    <section class="transport" aria-label="transport">
+      <button class="key tk" id="kPrev" aria-label="previous"><b class="glyph g-prev"></b><span class="eng">prev</span></button>
+      <button class="key tk" id="kStop" aria-label="stop"><b class="glyph g-stop"></b><span class="eng">stop</span></button>
+      <button class="key tk play" id="kPlay" aria-label="play"><b class="glyph g-play"></b><span class="eng">play</span><i class="dot"></i></button>
+      <button class="key tk" id="kNext" aria-label="next"><b class="glyph g-next"></b><span class="eng">next</span></button>
+      <button class="key tk rec" id="kRec" aria-label="record a take"><b class="glyph g-rec"></b><span class="eng">memo</span></button>
+    </section>
+
+    <section class="knobs" aria-label="effects">
+      <div class="kn"><div id="knVol"></div><span class="eng">vol</span></div>
+      <div class="kn"><div id="knTone"></div><span class="eng">lp · tone · hp</span></div>
+      <div class="kn"><div id="knDrive"></div><span class="eng">drive</span></div>
+      <div class="kn"><div id="knEcho"></div><span class="eng">echo</span></div>
+      <div class="kn"><div id="knSpace"></div><span class="eng">spring</span></div>
+      <div class="kn"><div id="knWow"></div><span class="eng">wow</span></div>
+    </section>
+
+    <!-- library sheet -->
+    <aside class="sheet" id="library" aria-label="tape library" aria-hidden="true" inert>
+      <div class="sheet-head">
+        <div class="sheet-title">
+          <span class="eng">tape</span>
+          <b id="libCount">00 tracks</b>
+          <span class="mono dim" id="libTotal">00:00</span>
+        </div>
+        <div class="sheet-actions">
+          <button class="key chip" id="kLoad" aria-label="load audio files"><b class="txt">+ load</b></button>
+          <button class="key chip" id="kClear" aria-label="erase whole tape"><b class="txt">erase</b></button>
+          <button class="key chip close" id="kLibClose" aria-label="close library"><b class="glyph g-close"></b></button>
+        </div>
+      </div>
+      <ol class="tracklist" id="tracklist"></ol>
+      <div class="empty" id="libEmpty">
+        <svg viewBox="0 0 240 110" class="empty-art" aria-hidden="true">
+          <g class="reel-a"><circle cx="62" cy="55" r="40"/><circle cx="62" cy="55" r="9"/><path d="M62 15v14M62 81v14M27.4 35l12.1 7M84.5 68l12.1 7M27.4 75l12.1-7M84.5 42l12.1-7"/></g>
+          <g class="reel-b"><circle cx="178" cy="55" r="40"/><circle cx="178" cy="55" r="9"/><path d="M178 15v14M178 81v14M143.4 35l12.1 7M200.5 68l12.1 7M143.4 75l12.1-7M200.5 42l12.1-7"/></g>
+          <path class="tape-path" d="M62 95 L120 104 L178 95"/>
+          <circle cx="120" cy="104" r="3" class="guide"/>
+        </svg>
+        <p class="empty-h">no tape threaded</p>
+        <p class="empty-p">load your own music from this phone. it is copied into the app, so it stays here offline.</p>
+        <p class="empty-f mono">mp3 · wav · m4a · aac · ogg · opus · flac</p>
+        <button class="key wide" id="kLoad2"><b class="txt">+ load audio</b></button>
+      </div>
+      <div class="sheet-foot">
+        <span class="eng" id="libStore">storage —</span>
+        <span class="eng">drag ≡ to reorder</span>
+      </div>
+    </aside>
+
+    <aside class="sheet about" id="about" aria-label="about" aria-hidden="true" inert>
+      <div class="sheet-head">
+        <div class="sheet-title"><span class="eng">spec</span><b>reel–7 field player</b></div>
+        <div class="sheet-actions"><button class="key chip close" id="kAboutClose" aria-label="close"><b class="glyph g-close"></b></button></div>
+      </div>
+      <div class="spec">
+        <dl>
+          <dt>reel</dt><dd>hold to stop the tape · turn to scrub · flick to wind</dd>
+          <dt>speed</dt><dd>varispeed 0.50–2.00x, pitch follows like tape · double-tap = 1.00</dd>
+          <dt>knobs</dt><dd>drag up/down · double-tap resets · fx key bypasses all</dd>
+          <dt>tone</dt><dd>left = low-pass · right = high-pass · centre = flat</dd>
+          <dt>a–b</dt><dd>tap: set a · tap: set b and loop · tap: clear</dd>
+          <dt>cue</dt><dd>tap: drop a marker (8 per track) · hold: clear markers</dd>
+          <dt>memo</dt><dd>records a take from the microphone into the tape</dd>
+          <dt>keys</dt><dd>space play · ←/→ seek 5 s · shift+←/→ track · [ ] speed · l tape · a a–b · m cue</dd>
+          <dt>formats</dt><dd>mp3 wav m4a aac ogg opus flac webm — whatever this browser can decode</dd>
+        </dl>
+        <p class="fine">reel–7 is an independent homage to portable tape recorders. it is not made by, affiliated with or endorsed by teenage engineering. no tracking, no accounts — your audio never leaves this device.</p>
+      </div>
+    </aside>
+
+    <div class="scrim" id="scrim" hidden></div>
+    <input type="file" id="file" class="visually-hidden" multiple tabindex="-1" aria-hidden="true"
+      accept="audio/*,.mp3,.wav,.wave,.m4a,.aac,.mp4,.ogg,.oga,.opus,.flac,.webm,.weba,.3gp,.amr" />
+  </main>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
