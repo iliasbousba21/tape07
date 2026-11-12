@@ -1,0 +1,96 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>scratch harness</title>
+<body><pre id="out">running</pre>
+<script>
+(async () => {
+  const out = document.getElementById('out');
+  const lines = [];
+  const say = (s) => { lines.push(s); out.textContent = lines.join('\n'); };
+  const rms = (b) => {
+    let s = 0;
+    for (let i = 0; i < b.length; i++) s += b[i] * b[i];
+    return Math.sqrt(s / b.length);
+  };
+  try {
+    const ctx = new AudioContext({ latencyHint: 'interactive' });
+    await ctx.resume();
+    if (ctx.state !== 'running') throw new Error('context ' + ctx.state);
+    const url = new URL('scratch-processor.js', document.baseURI);
+    await ctx.audioWorklet.addModule(url.href);
+    const sr = ctx.sampleRate;
+    const node = new AudioWorkletNode(ctx, 'reel7-scratch', {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [2],
+    });
+    const an = ctx.createAnalyser();
+    an.fftSize = 2048;
+    node.connect(an);
+    an.connect(ctx.destination);
+
+    const seconds = 1;
+    const len = Math.floor(sr * seconds);
+    const ch = new Float32Array(len);
+    // first half silence, second half a steady tone-level
+    for (let i = 0; i < len; i++) ch[i] = i > len / 2 ? 0.45 : 0;
+
+    node.port.start();
+    const ready = new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('worklet did not answer')), 3000);
+      node.port.onmessage = (e) => {
+        if (e.data && e.data.type === 'ready') { clearTimeout(t); resolve(); }
+      };
+    });
+    const copy = new Float32Array(ch);
+    node.port.postMessage({ type: 'buffer', ch0: copy, ch1: null, len, bufRate: sr }, [copy.buffer]);
+    node.port.postMessage({ type: 'ping' });
+    await ready;
+    say('worklet ready, rate ' + sr);
+
+    const rate = node.parameters.get('rate');
+    const scratch = node.parameters.get('scratch');
+    const buf = new Float32Array(an.fftSize);
+    const listen = (ms) => new Promise((r) => setTimeout(() => { an.getFloatTimeDomainData(buf); r(rms(buf)); }, ms));
+
+    // Forward from the top: the first half is silence, so a short play is quiet.
+    node.port.postMessage({ type: 'seek', seconds: 0 });
+    rate.setValueAtTime(1, ctx.currentTime);
+    scratch.setValueAtTime(0, ctx.currentTime);
+    const quiet = await listen(180);
+    say('forward-in-silence rms ' + quiet.toFixed(4));
+    if (quiet > 0.08) throw new Error('expected silence at the head, got ' + quiet);
+
+    // Finger down, not moving, over the loud half: must be silent (no frozen sample).
+    node.port.postMessage({ type: 'seek', seconds: 0.75 });
+    rate.setValueAtTime(0, ctx.currentTime);
+    scratch.setValueAtTime(1, ctx.currentTime);
+    const held = await listen(220);
+    say('held-still rms ' + held.toFixed(4));
+    if (held > 0.05) throw new Error('holding still should be silent, got ' + held);
+
+    // Scratch backwards through the loud half.
+    node.port.postMessage({ type: 'seek', seconds: 0.85 });
+    rate.setValueAtTime(-1, ctx.currentTime);
+    scratch.setValueAtTime(1, ctx.currentTime);
+    const back = await listen(200);
+    say('reverse rms ' + back.toFixed(4));
+    if (back < 0.12) throw new Error('reverse scratch should be audible, got ' + back);
+
+    // Forwards through the loud half.
+    node.port.postMessage({ type: 'seek', seconds: 0.6 });
+    rate.setValueAtTime(1, ctx.currentTime);
+    scratch.setValueAtTime(0, ctx.currentTime);
+    const fwd = await listen(180);
+    say('forward rms ' + fwd.toFixed(4));
+    if (fwd < 0.12) throw new Error('forward play should be audible, got ' + fwd);
+
+    document.body.dataset.result = 'pass';
+    say('PASS');
+  } catch (err) {
+    document.body.dataset.result = 'fail';
+    say('FAIL ' + (err && (err.stack || err.message) || err));
+  }
+})();
+</script>
+</body>

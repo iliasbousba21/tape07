@@ -3,3 +3,18 @@ dist
 .DS_Store
 *.log
 .vite
+
+# Android / Capacitor build output and secrets. The android/ project itself stays.
+*.keystore
+*.jks
+keystore.properties
+android/.gradle
+android/build
+android/app/build
+android/local.properties
+android/captures
+android/app/src/main/assets/public
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/.idea
+*.apk

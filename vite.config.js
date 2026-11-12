@@ -34,6 +34,10 @@ export default defineConfig({
   base: './',
   server: { host: true },
   preview: { host: true },
+  define: {
+    // Busts the HTTP cache of public/scratch-processor.js on each production build.
+    __REEL7_BUILD__: JSON.stringify(Date.now().toString(36)),
+  },
   build: { outDir: 'dist', target: 'es2020', assetsInlineLimit: 0 },
   worker: { format: 'es' },
   plugins: [precacheServiceWorker()],

@@ -36,9 +36,10 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // static assets: cache first, fill on miss
+  // static assets: cache first, fill on miss.
+  // ignoreSearch so a cache-busted worklet URL (?v=build) still hits the precache.
   e.respondWith(
-    caches.match(req).then(
+    caches.match(req, { ignoreSearch: true }).then(
       (hit) =>
         hit ||
         fetch(req).then((res) => {

@@ -143,6 +143,7 @@ export class Wheel {
       const { cx, cy } = this.centre();
       last = { a: Math.atan2(e.clientY - cy, e.clientX - cx), t: performance.now() };
       samples = [];
+      this.cancelled = false;
       this.touching = this.driving = true;
       this.vel = 0;
       cancelAnimationFrame(this.raf);
@@ -161,6 +162,9 @@ export class Wheel {
       const t = performance.now();
       samples.push({ deg, dt: Math.max(1, t - last.t), t });
       samples = samples.filter((s) => t - s.t < 90);
+      const sum = samples.reduce((a, s) => a + s.deg, 0);
+      const dur = samples.reduce((a, s) => a + s.dt, 0);
+      this.vel = dur ? sum / dur : 0;
       last = { a, t };
       this.angle += deg;
       this.render();
@@ -170,6 +174,7 @@ export class Wheel {
       if (notch !== this._notch) { this._notch = notch; haptic(3); }
     });
     const up = () => {
+      if (this.cancelled) { this.cancelled = false; last = null; return; }
       if (!last) return;
       last = null;
       el.classList.remove('is-touch');
@@ -187,9 +192,19 @@ export class Wheel {
     el.addEventListener('pointercancel', up);
     el.addEventListener('lostpointercapture', up);
   }
+  // Drop a grab or a coast without firing onSettle (transport stop / track change).
+  cancel() {
+    this.cancelled = true;
+    this.touching = false;
+    this.driving = false;
+    this.vel = 0;
+    cancelAnimationFrame(this.raf);
+    this.el.classList.remove('is-touch');
+  }
   coast() {
     let prev = performance.now();
     const step = (now) => {
+      if (this.cancelled) { this.cancelled = false; return; }
       const dt = Math.min(48, now - prev);
       prev = now;
       const d = this.vel * dt;

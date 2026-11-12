@@ -1,0 +1,13 @@
+{
+  "appId": "app.reel7.fieldplayer",
+  "appName": "REEL-7",
+  "webDir": "dist",
+  "backgroundColor": "#e9e5dc",
+  "android": {
+    "backgroundColor": "#e9e5dc",
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

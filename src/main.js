@@ -11,7 +11,24 @@ const MAX_CUES = 8;
 const PEAK_BINS = 720;
 
 const engine = new Engine();
-const el = engine.el;
+// Transport facade. Playback time lives on the tape reader; this keeps the rest of
+// the UI on the same shape it had when `el` was an <audio> element.
+const el = {
+  get currentTime() { return engine.currentTime; },
+  set currentTime(v) { engine.seek(v); },
+  get duration() { return engine.duration; },
+  get paused() { return !engine.playing; },
+  get playbackRate() { return engine.transportRate || 1; },
+  set playbackRate(v) { engine.setTransportRate(v); },
+  get readyState() { return engine.ready ? 1 : 0; },
+  get error() { return engine.lastError; },
+  play() { return engine.start(); },
+  pause() { engine.halt(); },
+  load() {},
+  removeAttribute() { engine.unload(); },
+  getAttribute(name) { return name === 'src' && engine.ready ? '1' : null; },
+  addEventListener(type, fn) { engine.on(type, fn); },
+};
 const recorder = new Recorder(engine);
 
 const S = {
@@ -23,6 +40,7 @@ const S = {
   holding: false, // finger on the reel
   wasPlaying: false,
   pendingSeek: null,
+  loadToken: 0,
   loopArm: null, // A set, waiting for B
   settings: loadSettings(),
 };
@@ -116,7 +134,8 @@ const wave = $('wave'), meters = $('meters');
 const wctx = wave.getContext('2d'), mctx = meters.getContext('2d');
 let dpr = 1;
 function sizeCanvases() {
-  dpr = Math.min(3, window.devicePixelRatio || 1);
+  // Cap at 2. A 3× phone canvas is a lot of fill for a pixel-font waveform.
+  dpr = Math.min(2, window.devicePixelRatio || 1);
   for (const c of [wave, meters]) {
     const r = c.getBoundingClientRect();
     c.width = Math.max(1, Math.round(r.width * dpr));
@@ -268,15 +287,32 @@ function rampTo(target, ms) {
   });
 }
 
+let readFlash;
+function scheduleReadFlash() {
+  clearTimeout(readFlash);
+  readFlash = setTimeout(() => flash('reading tape…', 60000), 160);
+}
+function cancelReadFlash() {
+  clearTimeout(readFlash);
+  if (dMsg.textContent === 'reading tape…') dMsg.className = 'd-msg';
+}
+
 async function loadTrack(i, { autoplay = false, at = 0 } = {}) {
   const t = S.tracks[i];
   if (!t) return false;
+  const token = ++S.loadToken;
   S.cur = i;
   S.loopArm = null;
+  if (S.holding) {
+    S.holding = false;
+    S.wasPlaying = false;
+    wheel.cancel();
+  }
   let blob;
   try {
     blob = await db.getBlob(t.id);
   } catch {}
+  if (token !== S.loadToken) return false;
   if (!blob) {
     flash(`missing audio: ${t.title}`, 2600, 'err');
     t.error = 'missing';
@@ -284,23 +320,62 @@ async function loadTrack(i, { autoplay = false, at = 0 } = {}) {
     updateStatus();
     return false;
   }
-  if (S.url) URL.revokeObjectURL(S.url);
-  S.url = URL.createObjectURL(blob);
-  S.pendingSeek = at > 0 ? at : null;
-  el.src = S.url;
-  applyRate();
-  el.load();
   updateStatus();
   renderLibrary();
   setMediaSession();
   saveSettings();
+  if (!engine.hasDecoded(t.id) && !engine.tooBig(blob.size || t.size || 0, t.duration || 0)) scheduleReadFlash();
+  let result;
+  try {
+    result = await engine.load(blob, { id: t.id, at: at > 0 ? at : 0, durationHint: t.duration || 0 });
+  } catch {
+    if (token !== S.loadToken) return false;
+    cancelReadFlash();
+    t.error = 'decode';
+    flash('cannot play this file here', 2400, 'err');
+    renderLibrary();
+    updateStatus();
+    return false;
+  }
+  if (token !== S.loadToken || !result || result.mode === 'cancelled') return false;
+  cancelReadFlash();
+  S.pendingSeek = null;
+  if (result.duration && Math.abs((t.duration || 0) - result.duration) > 0.5) {
+    t.duration = result.duration;
+  }
+  if (result.peaks && !t.peaks) t.peaks = result.peaks;
+  if (result.mode === 'element') {
+    const why = result.fallback === 'engine'
+      ? 'scratch needs a newer webview — playing normally'
+      : 'too large to scratch — playing normally';
+    flash(why, 3200);
+  } else {
+    t.error = t.error === 'decode' || t.error === 'codec' ? null : t.error;
+  }
+  if (result.duration || result.peaks) db.putTrack(t).catch(() => {});
+  engine.setLoop(t.loop?.b != null ? t.loop : null);
+  applyRate();
+  renderLibrary();
+  updateStatus();
+  setPositionState();
   if (!t.peaks && !t.peaksFailed) queuePeaks(t);
+  prefetchNext(i + 1);
   if (autoplay) await play();
   return true;
 }
 
+function prefetchNext(i) {
+  const t = S.tracks[i];
+  if (!t) return;
+  db.getBlob(t.id).then((blob) => {
+    if (!blob || S.tracks[S.cur + 1]?.id !== t.id) return;
+    engine.prefetch(blob, t.id, t.duration || 0);
+  }).catch(() => {});
+}
+
 async function play() {
   if (recorder.active) return;
+  if (S.holding) { S.wasPlaying = true; updateStatus(); return; }
   if (S.cur < 0) {
     if (!S.tracks.length) { openLibrary(); flash('load some audio first', 1800); return; }
     await loadTrack(0);
@@ -342,9 +417,15 @@ function toggle() {
 
 function stop() {
   if (recorder.active) return stopRec();
-  const wasPlaying = !el.paused;
+  if (S.holding) {
+    S.holding = false;
+    S.wasPlaying = false;
+    wheel.cancel();
+    engine.endScratch(engine.currentTime);
+  }
+  const wasPlaying = engine.playing;
   pause({ brake: wasPlaying }).then(() => {
-    seek(wasPlaying ? 0 : 0);
+    seek(0);
     updateStatus();
   });
 }
@@ -368,27 +449,15 @@ function prev() {
   loadTrack(S.cur - 1, { autoplay: !el.paused });
 }
 
-el.addEventListener('loadedmetadata', () => {
-  if (S.pendingSeek != null) { try { el.currentTime = S.pendingSeek; } catch {} S.pendingSeek = null; }
-  const t = S.tracks[S.cur];
-  if (t && isFinite(el.duration) && Math.abs((t.duration || 0) - el.duration) > 0.5) {
-    t.duration = el.duration;
-    db.putTrack(t);
-    renderLibrary();
-  }
-  setPositionState();
-});
 el.addEventListener('ended', () => next(true));
 el.addEventListener('play', updateStatus);
 el.addEventListener('pause', () => { if (!S.braking) updateStatus(); });
-el.addEventListener('ratechange', setPositionState);
-el.addEventListener('timeupdate', checkLoop);
 el.addEventListener('error', () => {
   const t = S.tracks[S.cur];
-  if (!t || !el.getAttribute('src')) return;
+  if (!t) return;
   const code = el.error?.code;
   t.error = code === 4 ? 'codec' : 'decode';
-  flash(code === 4 ? `format not supported on this device` : `decode error — skipping`, 2800, 'err');
+  flash(code === 4 ? 'format not supported on this device' : 'decode error — skipping', 2800, 'err');
   renderLibrary();
   updateStatus();
 });
@@ -440,32 +509,52 @@ el.addEventListener('play', () => navigator.mediaSession && (navigator.mediaSess
 el.addEventListener('pause', () => navigator.mediaSession && (navigator.mediaSession.playbackState = 'paused'));
 
 /* ------------------------------------------------------------ reel / jog */
-let scrubAcc = 0, lastSeekAt = 0;
+let scrubAcc = 0, lastScrubAt = 0, scratchRate = 0;
+let scratchFallbackNoted = false;
 const wheel = new Wheel($('wheel'), {
   onGrab() {
-    if (!S.tracks[S.cur]) return;
-    S.wasPlaying = S.holding ? S.wasPlaying : !el.paused;
+    engine.unlock();
+    if (!S.tracks[S.cur] || !engine.ready) return;
+    cancelAnimationFrame(rampRaf);
+    S.wasPlaying = S.holding ? S.wasPlaying : engine.playing;
     S.holding = true;
-    if (!el.paused) el.pause(); // finger on the reel = tape stops
-    scrubAcc = el.currentTime;
-    wheel.angle = el.currentTime * DEG_PER_SEC;
+    scrubAcc = engine.currentTime;
+    scratchRate = 0;
+    lastScrubAt = performance.now();
+    scratchFallbackNoted = false;
+    engine.beginScratch(scrubAcc);
+    wheel.angle = scrubAcc * DEG_PER_SEC;
+    if (engine.mode === 'element' && !scratchFallbackNoted) {
+      scratchFallbackNoted = true;
+      flash('this tape plays forward only', 1800);
+    }
     updateStatus();
   },
   onScrub(deg) {
-    if (!S.tracks[S.cur]) return;
+    if (!S.holding || !S.tracks[S.cur]) return;
     const d = trackDuration();
+    const prev = scrubAcc;
     scrubAcc = clamp(scrubAcc + deg / DEG_PER_SEC, 0, d || Infinity);
     const now = performance.now();
-    if (now - lastSeekAt > 45) { lastSeekAt = now; try { el.currentTime = scrubAcc; } catch {} }
+    const dt = (now - lastScrubAt) / 1000;
+    lastScrubAt = now;
+    let instant = 0;
+    if (dt > 0.0004 && dt < 0.08) instant = (scrubAcc - prev) / dt;
+    else instant = wheel.vel * 1000 / DEG_PER_SEC;
+    const follow = dt > 0.03 ? 0.85 : 0.55;
+    scratchRate += (instant - scratchRate) * follow;
+    if (Math.abs(scratchRate) < 0.025) scratchRate = 0;
+    engine.noteScratch(scrubAcc, scratchRate);
   },
   onRelease() {},
   onSettle() {
     if (!S.holding) return;
-    try { el.currentTime = scrubAcc; } catch {}
+    const resume = S.wasPlaying;
+    engine.endScratch(scrubAcc, { keepAlive: resume });
     S.holding = false;
-    if (S.wasPlaying) play();
-    updateStatus();
-    setPositionState();
+    scratchRate = 0;
+    if (resume) play();
+    else { updateStatus(); setPositionState(); }
   },
 });
 $('wheel').addEventListener('keydown', (e) => {
@@ -500,6 +589,7 @@ function loopKey() {
     seek(a);
   }
   persistTrack({ ...t, loop: t.loop?.b != null ? t.loop : null });
+  engine.setLoop(t.loop?.b != null ? t.loop : null);
   updateStatus();
 }
 
@@ -667,12 +757,11 @@ async function importFiles(files) {
   updateStorage();
 }
 
-/* waveform peaks, one at a time, decode at 8 kHz to keep memory low */
+/* waveform peaks, one at a time, decoded in the worker at 8 kHz */
 const peakQueue = [];
 let peakBusy = false;
-let worker;
 function queuePeaks(t) {
-  if (peakQueue.includes(t.id)) return;
+  if (!t || peakQueue.includes(t.id) || t.peaks || t.peaksFailed) return;
   peakQueue.push(t.id);
   runPeaks();
 }
@@ -686,27 +775,17 @@ async function runPeaks() {
     if (!t || t.peaks) throw 0;
     if (t.size > 160 * 1024 * 1024) throw new Error('too big');
     const blob = await db.getBlob(id);
-    const ab = await blob.arrayBuffer();
-    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-    const off = new OAC(1, 1, 8000);
-    const buf = await off.decodeAudioData(ab);
-    const channels = [];
-    for (let c = 0; c < Math.min(2, buf.numberOfChannels); c++) channels.push(buf.getChannelData(c).slice());
-    worker = worker || new Worker(new URL('./peaks.worker.js', import.meta.url), { type: 'module' });
-    const peaks = await new Promise((resolve, reject) => {
-      const onMsg = (e) => { if (e.data.id === id) { worker.removeEventListener('message', onMsg); resolve(e.data.peaks); } };
-      worker.addEventListener('message', onMsg);
-      worker.onerror = reject;
-      worker.postMessage({ id, channels, bins: PEAK_BINS }, channels.map((c) => c.buffer));
-    });
-    t.peaks = peaks;
-    if (!t.duration) t.duration = buf.duration;
-    await db.putTrack(t);
+    const peaks = await engine.computePeaks(blob);
+    if (!peaks) throw new Error('peaks');
+    if (!t.peaks) {
+      t.peaks = peaks;
+      await db.putTrack(t);
+    }
   } catch (e) {
     if (t && e !== 0) { t.peaksFailed = true; db.putTrack(t).catch(() => {}); }
   }
   peakBusy = false;
-  if (peakQueue.length) setTimeout(runPeaks, 50);
+  if (peakQueue.length) setTimeout(runPeaks, 80);
 }
 
 /* ------------------------------------------------------------ library UI */
@@ -872,6 +951,7 @@ function nextTakeNo() {
 }
 async function startRec() {
   if (!Recorder.supported()) return flash('recording not supported here', 2000, 'err');
+  await engine.unlock();
   await pause({ brake: false });
   try {
     takeNo = nextTakeNo();
@@ -911,7 +991,7 @@ function press(id, fn, { hold } = {}) {
   const b = $(id);
   let timer, held = false;
   b.addEventListener('pointerdown', () => {
-    engine.ensure(); // unlock audio on the first gesture
+    engine.unlock(); // resume the context inside the gesture
     held = false;
     if (hold) timer = setTimeout(() => { held = true; hold(); navigator.vibrate?.(20); }, 600);
   });
@@ -993,9 +1073,14 @@ document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: fals
 /* ------------------------------------------------------------ frame loop */
 let lastTC = '';
 let smoothAngle = 0;
+let lastPosState = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   if (document.hidden) return;
+  if (S.holding && now - lastScrubAt > 48) {
+    scratchRate = 0;
+    engine.noteScratch(scrubAcc, 0);
+  }
   const t = recorder.active ? recorder.elapsed() : S.holding ? scrubAcc : el.currentTime;
   const tc = timecode(t);
   if (tc !== lastTC) { dTime.textContent = tc; lastTC = tc; }
@@ -1008,6 +1093,7 @@ function frame(now) {
     wheel.angle = smoothAngle;
     wheel.render();
   } else smoothAngle = wheel.angle;
+  if (now - lastPosState > 500) { lastPosState = now; setPositionState(); }
   checkLoop();
   drawWave(now);
   drawMeters(now);
@@ -1016,6 +1102,7 @@ function frame(now) {
 /* ------------------------------------------------------------ boot */
 async function boot() {
   sizeCanvases();
+  engine.prepare().catch(() => {});
   try {
     S.tracks = await db.allTracks();
   } catch {
@@ -1031,7 +1118,10 @@ async function boot() {
   requestAnimationFrame(frame);
   document.fonts?.ready.then(sizeCanvases);
   setInterval(() => !el.paused && saveSettings(), 4000);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) saveSettings(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) saveSettings();
+    else if (engine.playing || engine.scratching) engine.unlock();
+  });
 }
 boot();
 

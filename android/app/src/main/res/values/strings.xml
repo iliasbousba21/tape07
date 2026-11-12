@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">REEL-7</string>
+    <string name="title_activity_main">REEL-7</string>
+    <string name="package_name">app.reel7.fieldplayer</string>
+    <string name="custom_url_scheme">app.reel7.fieldplayer</string>
+</resources>
